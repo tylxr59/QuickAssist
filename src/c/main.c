@@ -84,6 +84,12 @@ static void footer(const char *text) {
 static void cancel_idle_timer(void) {
   if (s_idle_timer) { app_timer_cancel(s_idle_timer); s_idle_timer = NULL; }
 }
+// One short tap for a reply, two for a failed request, so the result is clear without looking.
+static void buzz(bool ok) {
+  static const uint32_t success[] = {60}, failure[] = {60, 120, 60};
+  vibes_enqueue_custom_pattern(ok ? (VibePattern){.durations = success, .num_segments = 1}
+                                  : (VibePattern){.durations = failure, .num_segments = 3});
+}
 static void idle_timeout(void *context) {
   s_idle_timer = NULL;
   window_stack_pop_all(true);
@@ -98,13 +104,14 @@ static void user_activity(ClickRecognizerRef recognizer, void *context) {
 static void cancel_timer(void) { if (s_timer) { app_timer_cancel(s_timer); s_timer = NULL; } }
 static void timeout(void *context) {
   s_timer = NULL;
-  bool was_processing = s_busy;
+  bool was_processing = s_busy, had_command = s_busy || s_pending[0];
   s_pending[0] = '\0';
   if (s_listening && s_dictation) dictation_session_stop(s_dictation);
   s_listening = false; s_busy = false;
   s_request++; // Late results must not overwrite this error.
   show(was_processing ? "Request timed out. It may have run. Check Home Assistant before trying again." : "Phone companion unavailable. Check Bluetooth and press the middle button to retry.");
   footer(s_received_config ? "Speak" : "Reconnect");
+  if (had_command) buzz(false);
 }
 static void deadline(uint32_t ms) { cancel_timer(); s_timer = app_timer_register(ms, timeout, NULL); }
 static void send_hello(void) {
@@ -137,7 +144,7 @@ static void send_pending(void) {
   dict_write_uint32(it, MESSAGE_KEY_RequestId, s_request);
   dict_write_cstring(it, MESSAGE_KEY_Text, s_pending);
   show(s_pending); s_pending[0] = '\0'; s_busy = true; footer("Thinking…");
-  if (app_message_outbox_send() != APP_MSG_OK) { cancel_timer(); s_busy = false; show("Could not send. Check your phone connection."); footer("Speak"); return; }
+  if (app_message_outbox_send() != APP_MSG_OK) { cancel_timer(); s_busy = false; show("Could not send. Check your phone connection."); footer("Speak"); buzz(false); return; }
   deadline(80000);
 }
 static void dictation_result(DictationSession *session, DictationSessionStatus status, char *text, void *context) {
@@ -211,7 +218,7 @@ static void inbox(DictionaryIterator *it, void *context) {
   if (!id || id->value->uint32 != s_request) return;
   if (type->value->uint8 == ERROR && s_busy) {
     cancel_timer(); s_busy = false; s_request++;
-    show(text ? text->value->cstring : "Home Assistant request failed."); footer("Speak");
+    show(text ? text->value->cstring : "Home Assistant request failed."); footer("Speak"); buzz(false);
   } else if (type->value->uint8 == CHUNK) {
     Tuple *index = dict_find(it, MESSAGE_KEY_ChunkIndex), *last = dict_find(it, MESSAGE_KEY_ChunkLast);
     if (!index || !last || !text) return;
@@ -220,11 +227,14 @@ static void inbox(DictionaryIterator *it, void *context) {
     if (!s_busy || s_complete || n != s_next_chunk) return;
     if (n == 0) s_reply[0] = '\0';
     size_t used = strlen(s_reply), added = strlen(text->value->cstring);
-    if (used + added > MAX_REPLY) { cancel_timer(); s_busy = false; s_request++; show("Reply exceeded the display limit."); footer("Speak"); return; }
+    if (used + added > MAX_REPLY) { cancel_timer(); s_busy = false; s_request++; show("Reply exceeded the display limit."); footer("Speak"); buzz(false); return; }
     memcpy(s_reply + used, text->value->cstring, added + 1);
     s_next_chunk++;
     acknowledge(s_request, n);
-    if (last->value->uint8) { s_complete = true; s_busy = false; cancel_timer(); show(s_reply); footer("Ask again"); restart_idle_timer(); }
+    if (last->value->uint8) {
+      s_complete = true; s_busy = false; cancel_timer(); show(s_reply); footer("Ask again"); restart_idle_timer();
+      buzz(true);
+    }
   }
 }
 static void outbox_sent(DictionaryIterator *it, void *context) { send_pending(); }
@@ -232,7 +242,7 @@ static void outbox_failed(DictionaryIterator *it, AppMessageResult reason, void 
   Tuple *type = dict_find(it, MESSAGE_KEY_Type);
   if (type && type->value->uint8 == COMMAND && s_busy) {
     cancel_timer(); s_busy = false; s_request++;
-    show("Phone delivery failed. The command may have run; check Home Assistant."); footer("Speak");
+    show("Phone delivery failed. The command may have run; check Home Assistant."); footer("Speak"); buzz(false);
   } else send_pending();
 }
 static void init(void) {

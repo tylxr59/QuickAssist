@@ -26,7 +26,7 @@ static bool outbox_busy, session_available = true;
 static int starts, stops, commands, hellos;
 static uint32_t last_deadline, now;
 static AppTimer timers[128];
-static int timer_count, exits;
+static int timer_count, exits, pulses, error_buzzes;
 static char command_text[1025], shown[8193];
 static void show(const char *text) { snprintf(shown, sizeof(shown), "%s", text); }
 static void footer(const char *text) {}
@@ -48,6 +48,10 @@ static void advance(uint32_t ms) {
   }
 }
 static void window_stack_pop_all(bool animated) { exits++; }
+typedef struct { const uint32_t *durations; uint32_t num_segments; } VibePattern;
+static void vibes_enqueue_custom_pattern(VibePattern pattern) {
+  if (pattern.num_segments == 1) pulses++; else error_buzzes++;
+}
 static DictationSession *dictation_session_create(uint32_t size, void (*cb)(DictationSession *, DictationSessionStatus, char *, void *), void *ctx) { return session_available ? (DictationSession *)1 : NULL; }
 static void dictation_session_enable_confirmation(DictationSession *session, bool enabled) {}
 static void dictation_session_enable_error_dialogs(DictationSession *session, bool enabled) {}
@@ -86,7 +90,7 @@ static void config(bool ready, uint32_t revision) {
 static void reset(void) {
   s_ready = s_busy = s_listening = s_auto_started = s_received_config = s_complete = false;
   s_timer = s_start_timer = s_idle_timer = NULL; s_idle_seconds = 30;
-  now = timer_count = exits = 0; s_dictation = NULL;
+  now = timer_count = exits = pulses = error_buzzes = 0; s_dictation = NULL;
   s_pending[0] = '\0'; s_request = s_config_revision = 0;
   starts = stops = commands = hellos = 0; outbox_busy = false; session_available = true;
 }
@@ -99,6 +103,12 @@ static void reply_chunk(uint16_t index, bool last) {
   it.present[MESSAGE_KEY_Text] = true;
   it.values[MESSAGE_KEY_Text].cstring = "Reply";
   it.tuples[MESSAGE_KEY_Text].value = &it.values[MESSAGE_KEY_Text];
+  inbox(&it, NULL);
+}
+static void reply_error(void) {
+  DictionaryIterator it = {0};
+  dict_write_uint8(&it, MESSAGE_KEY_Type, ERROR);
+  dict_write_uint32(&it, MESSAGE_KEY_RequestId, s_request);
   inbox(&it, NULL);
 }
 static void begin_command(void) {
@@ -172,15 +182,15 @@ int main(void) {
   start_automatic(NULL); assert(starts == 1 && s_listening);
   // The full successful reply starts the default inactivity timer.
   begin_command(); assert(!s_idle_timer);
-  reply_chunk(0, false); assert(!s_idle_timer && s_busy);
-  reply_chunk(1, true); assert(s_idle_timer && !s_busy && last_deadline == 30000);
+  reply_chunk(0, false); assert(!s_idle_timer && s_busy && pulses == 0);
+  reply_chunk(1, true); assert(s_idle_timer && !s_busy && last_deadline == 30000 && pulses == 1);
   advance(29999); assert(exits == 0);
   advance(1); assert(exits == 1 && !s_idle_timer);
 
   // Scrolling/button activity extends the deadline; duplicate chunks do not.
   begin_command(); reply_chunk(0, true);
   advance(20000); user_activity(NULL, NULL);
-  advance(20000); reply_chunk(0, true);
+  advance(20000); reply_chunk(0, true); assert(pulses == 1);
   advance(9999); assert(exits == 0);
   advance(1); assert(exits == 1);
 
@@ -189,7 +199,16 @@ int main(void) {
   select_click(NULL, NULL); assert(s_listening && !s_idle_timer);
   advance(30000); assert(exits == 0);
   dictation_result(NULL, 0, "follow up", NULL); assert(s_busy && !s_idle_timer);
-  timeout(NULL); assert(!s_idle_timer && exits == 0);
+  timeout(NULL); assert(!s_idle_timer && exits == 0 && pulses == 1 && error_buzzes == 1);
+
+  // Failed requests buzz twice; failures before any speech stay silent.
+  begin_command(); reply_error(); assert(error_buzzes == 1 && pulses == 0 && !s_busy);
+  reset(); start_automatic(NULL); dictation_result(NULL, 0, "hello", NULL);
+  timeout(NULL); assert(error_buzzes == 1);
+  reset(); timeout(NULL); assert(error_buzzes == 0);
+  reset(); start_automatic(NULL); dictation_result(NULL, DictationSessionStatusFailureNoSpeechDetected, NULL, NULL);
+  assert(error_buzzes == 0);
+  begin_command(); outbox_failed(&out, APP_MSG_BUSY, NULL); assert(error_buzzes == 1 && !s_busy);
 
   // Settings changes cancel the old timer and apply a validated duration.
   begin_command(); reply_chunk(0, true); configure_timeout(60);

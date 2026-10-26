@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.0
+
+- Added haptic feedback when a request finishes: one short tap when a reply arrives, and two taps when a request fails or times out.
+
 ## 1.3.0
 
 - Added automatic closing after a successful Home Assistant reply, with a default inactivity timeout of 30 seconds.
