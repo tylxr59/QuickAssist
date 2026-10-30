@@ -13,7 +13,7 @@
   <a href="https://github.com/tylxr59/QuickAssist/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/tylxr59/QuickAssist?display_name=tag&sort=semver"></a>
   <a href="https://apps.repebble.com/9c105d58803741d5b9ec03af"><img alt="Pebble Appstore" src="https://img.shields.io/badge/Pebble%20Appstore-QuickAssist-ff4700"></a>
   <a href="https://www.home-assistant.io/voice_control/"><img alt="Home Assistant" src="https://img.shields.io/badge/Home%20Assistant-Assist-18bcf2?logo=homeassistant&logoColor=white"></a>
-  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/tylxr59/QuickAssist"></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-97ca00"></a>
 </p>
 
 <p align="center">
@@ -24,10 +24,6 @@
 </p>
 
 ---
-
-## 🎙️ QuickAssist
-
-Speak to your Home Assistant voice assistant directly from Pebble Time 2.
 
 Launching the app immediately opens Pebble dictation while QuickAssist checks readiness with the phone companion. If transcription finishes first, the watch holds it until the companion confirms the configured assistant is ready. The recognized text goes to your selected Home Assistant Assist pipeline, and its reply appears on your watch. Press SELECT to continue the conversation.
 
